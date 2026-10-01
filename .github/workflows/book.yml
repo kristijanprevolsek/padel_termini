@@ -1,0 +1,36 @@
+name: Rezervacija padel termina
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Samo ispiši, bez rezervacije"
+        type: boolean
+        default: true
+  schedule:
+    # Svaki dan u 05:58 UTC (07:58 ljeti / 06:58 zimi po zagrebačkom vremenu).
+    # Prilagodi vremenu kad Padel Embassy otvara nove termine.
+    - cron: "58 5 * * *"
+
+jobs:
+  book:
+    # Zakazano pokretanje radi samo ako je repo varijabla BOOKING_ENABLED = true
+    if: github.event_name == 'workflow_dispatch' || vars.BOOKING_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Rezerviraj
+        env:
+          PLAYTOMIC_EMAIL: ${{ secrets.PLAYTOMIC_EMAIL }}
+          PLAYTOMIC_PASSWORD: ${{ secrets.PLAYTOMIC_PASSWORD }}
+        run: |
+          ARGS="--exact-offset ${{ vars.BOOKING_DAYS_AHEAD || 7 }} --poll 20 --poll-timeout 900"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="--days-ahead ${{ vars.BOOKING_DAYS_AHEAD || 7 }} --dry-run"
+          fi
+          [ -n "${{ vars.PLAYTOMIC_TENANT_ID }}" ] && ARGS="$ARGS --tenant-id ${{ vars.PLAYTOMIC_TENANT_ID }}"
+          python playtomic_booker.py $ARGS
