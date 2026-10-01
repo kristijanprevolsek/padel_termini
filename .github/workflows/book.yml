@@ -1,36 +1,67 @@
-name: Rezervacija padel termina
+name: Padel termini
 
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Samo ispiši, bez rezervacije"
+        description: "Samo ispiši u log, bez obavijesti i rezervacije"
         type: boolean
-        default: true
+        default: false
   schedule:
-    # Svaki dan u 05:58 UTC (07:58 ljeti / 06:58 zimi po zagrebačkom vremenu).
-    # Prilagodi vremenu kad Padel Embassy otvara nove termine.
-    - cron: "58 5 * * *"
+    # Termini se otvaraju 7 dana unaprijed u 08:00 (Zagreb) -> pon/uto/sri otvaraju iduće pon/uto/sri.
+    # GitHub cron je u UTC-u, pa postoje dva rasporeda (ljetno/zimsko vrijeme); pokreće se ~15 min
+    # ranije jer GitHub zna kasniti, a skripta onda sama čeka do točno 08:00.
+    - cron: "45 5 * * 1-3"   # 07:45 CEST (ljeto, UTC+2)
+    - cron: "45 6 * * 1-3"   # 07:45 CET  (zima, UTC+1)
 
 jobs:
-  book:
-    # Zakazano pokretanje radi samo ako je repo varijabla BOOKING_ENABLED = true
-    if: github.event_name == 'workflow_dispatch' || vars.BOOKING_ENABLED == 'true'
+  padel:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Provjeri ljetno/zimsko vrijeme
+        id: gate
+        run: |
+          offset=$(TZ=Europe/Zagreb date +%z)
+          run=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "${{ github.event.schedule }}|$offset" in
+              "45 5 * * 1-3|+0200"|"45 6 * * 1-3|+0100") run=true ;;
+              *) run=false ;;
+            esac
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "Zagreb offset $offset, pokretanje: $run"
+
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Rezerviraj
+      - if: steps.gate.outputs.run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Provjeri termine
+        if: steps.gate.outputs.run == 'true'
         env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PLAYTOMIC_EMAIL: ${{ secrets.PLAYTOMIC_EMAIL }}
           PLAYTOMIC_PASSWORD: ${{ secrets.PLAYTOMIC_PASSWORD }}
         run: |
-          ARGS="--exact-offset ${{ vars.BOOKING_DAYS_AHEAD || 7 }} --poll 20 --poll-timeout 900"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS="--days-ahead ${{ vars.BOOKING_DAYS_AHEAD || 7 }} --dry-run"
+          ARGS="--exact-offset 7"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            ARGS="$ARGS --start-at 08:00 --poll 10 --poll-timeout 300"
           fi
-          [ -n "${{ vars.PLAYTOMIC_TENANT_ID }}" ] && ARGS="$ARGS --tenant-id ${{ vars.PLAYTOMIC_TENANT_ID }}"
+          # Zadano samo obavijest; automatska rezervacija samo uz repo varijablu BOOKING_MODE=book
+          if [ "${{ vars.BOOKING_MODE }}" != "book" ]; then
+            ARGS="$ARGS --notify-only"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ -n "${{ vars.PLAYTOMIC_TENANT_ID }}" ]; then
+            ARGS="$ARGS --tenant-id ${{ vars.PLAYTOMIC_TENANT_ID }}"
+          fi
           python playtomic_booker.py $ARGS

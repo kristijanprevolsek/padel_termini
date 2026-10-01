@@ -1,6 +1,6 @@
 # padel_termini
 
-Skripta za automatsku rezervaciju padel termina na **Playtomicu** u klubu **Padel Embassy (Zagreb)**.
+Skripta za obavijesti o slobodnim terminima i (opcionalno) automatsku rezervaciju padel termina na **Playtomicu** u klubu **Padel Embassy (Zagreb)**.
 
 Zadano traži:
 - samo **double** terene
@@ -61,15 +61,45 @@ Korisne opcije:
 **Plaćanje:** ako klub traži plaćanje karticom s 3D Secure potvrdom, skripta to ne može dovršiti.
 Najbolje radi s plaćanjem u klubu (`CASH`) ili s Playtomic novčanikom kluba (`MERCHANT_WALLET`).
 
-## Automatski preko GitHub Actions
+## Dnevna obavijest o otvorenim terminima (preporučeno)
 
-Workflow `.github/workflows/book.yml` svaki dan pokušava rezervirati datum koji je točno
-`BOOKING_DAYS_AHEAD` dana unaprijed (jedan datum po danu → nema duplih rezervacija).
+Termini u Padel Embassyju otvaraju se **7 dana unaprijed u 08:00**. Workflow
+`.github/workflows/book.yml` svaki **ponedjeljak, utorak i srijedu** u 08:00 provjeri termine koji su
+se upravo otvorili (isti dan idući tjedan) i pošalje ti obavijest sa slobodnim double terminima
+(90 min, od 19:00) i linkom na klub, pa **rezerviraš sam**. Ne treba mu tvoja Playtomic lozinka.
 
-1. **Settings → Secrets → Actions**: dodaj `PLAYTOMIC_EMAIL` i `PLAYTOMIC_PASSWORD`.
-2. **Settings → Variables → Actions**:
-   - `BOOKING_DAYS_AHEAD` – koliko dana unaprijed klub otvara termine (npr. `7`)
-   - `PLAYTOMIC_TENANT_ID` – (opcionalno) ID kluba
-   - `BOOKING_ENABLED` = `true` – uključuje dnevno zakazano pokretanje
-3. Prilagodi `cron` u workflowu vremenu kad klub otvara nove termine (cron je u UTC-u).
-4. Ručno pokreni workflow (*Run workflow*, dry run uključen) za provjeru.
+Primjer obavijesti:
+
+```
+🎾 Padel – otvoreni termini (90 min, od 19:00)
+📅 pon 12.10.:
+  19:00 – Teren 1, Teren 2
+  20:30 – Teren 1
+```
+
+### Postavljanje obavijesti (ntfy, najjednostavnije)
+
+1. Instaliraj aplikaciju **ntfy** (Android / iOS) i pretplati se na topic s nekim teško pogodivim
+   imenom, npr. `padel-embassy-k8x2q` (svatko tko zna ime topica može čitati poruke).
+2. U GitHub repou: **Settings → Secrets and variables → Actions → New repository secret**:
+   `NTFY_TOPIC` = `padel-embassy-k8x2q`.
+3. **Actions → Padel termini → Run workflow**: pošalje obavijest s trenutnim stanjem termina,
+   pa odmah vidiš radi li sve.
+
+Umjesto ntfy (ili uz njega) možeš koristiti Telegram: napravi bota preko `@BotFather` i dodaj secrete
+`TELEGRAM_BOT_TOKEN` i `TELEGRAM_CHAT_ID`.
+
+Ako skripta padne (npr. Playtomic promijeni API), dobiješ obavijest „❌ Padel – greška“, a
+GitHub ti dodatno pošalje e-mail o neuspjelom workflowu.
+
+Lokalno:
+
+```bash
+NTFY_TOPIC=padel-embassy-k8x2q python playtomic_booker.py --test-notify
+NTFY_TOPIC=padel-embassy-k8x2q python playtomic_booker.py --notify-only --exact-offset 7
+```
+
+### Automatska rezervacija (opcionalno)
+
+Ako ipak želiš da workflow sam rezervira, dodaj secrete `PLAYTOMIC_EMAIL` i `PLAYTOMIC_PASSWORD`
+i repo varijablu `BOOKING_MODE` = `book`. Obavijest tada javlja što je rezervirano, a što nije.

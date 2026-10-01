@@ -245,6 +245,70 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False))
 
 
+# --- notifications ------------------------------------------------------------
+def notify(title: str, message: str, success: bool, url: str | None = None) -> None:
+    """Pošalji obavijest preko ntfy.sh i/ili Telegrama (ako su konfigurirani)."""
+    sent = False
+    topic = os.environ.get("NTFY_TOPIC")
+    if topic:
+        try:
+            requests.post(
+                f"{os.environ.get('NTFY_SERVER', 'https://ntfy.sh')}/{topic}",
+                data=message.encode(),
+                headers={
+                    "Title": title.encode("utf-8"),
+                    "Tags": "tennis,white_check_mark" if success else "tennis,x",
+                    "Priority": "default" if success else "high",
+                    **({"Click": url, "Actions": f"view, Rezerviraj, {url}"} if url else {}),
+                },
+                timeout=15,
+            ).raise_for_status()
+            sent = True
+        except requests.RequestException as exc:
+            log.warning("ntfy obavijest nije poslana: %s", exc)
+
+    token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id,
+                      "text": f"{title}\n\n{message}" + (f"\n\n{url}" if url else "")},
+                timeout=15,
+            ).raise_for_status()
+            sent = True
+        except requests.RequestException as exc:
+            log.warning("Telegram obavijest nije poslana: %s", exc)
+
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(f"### {title}\n\n{message}\n" + (f"\n{url}\n" if url else ""))
+
+    if not sent and not summary:
+        log.info("Obavijest (nije konfiguriran kanal): %s — %s", title, message)
+
+
+def wait_until(hhmm: str, max_wait_min: int) -> None:
+    """Spavaj do zadanog lokalnog vremena (danas). Ako je već prošlo, kreni odmah."""
+    h, m = map(int, hhmm.split(":"))
+    now = datetime.now(TZ)
+    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    wait = (target - now).total_seconds()
+    if wait <= 0:
+        return
+    if wait > max_wait_min * 60:
+        raise SystemExit(f"Do {hhmm} ima više od {max_wait_min} min — prerano pokretanje, izlazim.")
+    log.info("Čekam do %s (%.0f s)...", hhmm, wait)
+    while (remaining := (target - datetime.now(TZ)).total_seconds()) > 0:
+        time.sleep(min(remaining, 30))
+    log.info("%s — krećem!", hhmm)
+
+
+def fmt_day(d: date) -> str:
+    return f"{['pon', 'uto', 'sri', 'čet', 'pet', 'sub', 'ned'][d.weekday()]} {d.strftime('%d.%m.')}"
+
+
 # --- main ---------------------------------------------------------------------
 def target_dates(args: argparse.Namespace) -> list[date]:
     today = datetime.now(TZ).date()
@@ -321,6 +385,9 @@ def main() -> int:
     p.add_argument("--days-ahead", type=int, default=14, help="koliko dana unaprijed tražiti")
     p.add_argument("--exact-offset", type=int,
                    help="traži samo datum danas+N (npr. dan kad se termini otvaraju)")
+    p.add_argument("--start-at", help="pričekaj do ovog lokalnog vremena (HH:MM) prije traženja")
+    p.add_argument("--max-wait", type=int, default=45,
+                   help="maks. minuta čekanja za --start-at (inače izlazi)")
     p.add_argument("--prefer-court", action="append", default=[],
                    help="dio naziva terena koji ima prednost (može više puta)")
     p.add_argument("--payment", default="CASH,MERCHANT_WALLET,OFFER,DIRECT,CREDIT_CARD",
@@ -332,6 +399,9 @@ def main() -> int:
     p.add_argument("--poll-timeout", type=int, default=900, help="maks. trajanje pollinga u sekundama")
     p.add_argument("--dry-run", action="store_true", help="samo ispiši što bi se rezerviralo")
     p.add_argument("--list-courts", action="store_true", help="ispiši terene kluba i izađi")
+    p.add_argument("--notify-only", action="store_true",
+                   help="ne rezerviraj, samo pošalji obavijest sa slobodnim terminima")
+    p.add_argument("--test-notify", action="store_true", help="pošalji probnu obavijest i izađi")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     args.payment = [m.strip() for m in args.payment.split(",") if m.strip()]
@@ -339,6 +409,64 @@ def main() -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
+    if args.test_notify:
+        notify("🎾 Padel – probna obavijest", "Obavijesti rade.", success=True)
+        return 0
+
+    try:
+        return run(args)
+    except (Exception, SystemExit) as exc:
+        if isinstance(exc, SystemExit) and exc.code in (0, None):
+            raise
+        if not args.dry_run and not args.list_courts:
+            notify("❌ Padel – greška", f"Skripta je pala: {exc}", success=False)
+        raise
+
+
+def run_notify_only(client: PlaytomicClient, tenant: dict, courts: dict[str, str],
+                    dates: list[date], args: argparse.Namespace) -> int:
+    """Pričekaj otvaranje termina i javi koji su double termini slobodni."""
+    tenant_id = tenant["tenant_id"]
+    url = f"https://app.playtomic.io/tenant/{tenant_id}"
+    if args.start_at:
+        wait_until(args.start_at, args.max_wait)
+
+    deadline = time.monotonic() + args.poll_timeout
+    while True:
+        found = {}
+        for day in dates:
+            raw = client.availability(tenant_id, day)
+            slots = select_slots(parse_slots(raw, courts, args.times_utc), day, args.duration,
+                                 args.earliest, args.latest, args.prefer_court)
+            if slots:
+                found[day] = slots
+        # Termini se otvaraju u start_at; ako ih još nema, kratko ponavljaj.
+        if found or args.poll <= 0 or time.monotonic() >= deadline:
+            break
+        log.info("Još nema slobodnih termina — ponovno za %ds", args.poll)
+        time.sleep(args.poll)
+
+    lines = []
+    for day in dates:
+        if day not in found:
+            lines.append(f"❌ {fmt_day(day)} – nema slobodnog double terena {args.earliest}–{args.latest}")
+            continue
+        by_time: dict[str, list[str]] = {}
+        for s in found[day]:
+            by_time.setdefault(s.start_local.strftime("%H:%M"), []).append(s.resource_name)
+        lines.append(f"📅 {fmt_day(day)}:")
+        lines += [f"  {t} – {', '.join(names)}" for t, names in by_time.items()]
+    msg = "\n".join(lines)
+    log.info("\n%s", msg)
+
+    title = (f"🎾 Padel – otvoreni termini ({args.duration} min, od {args.earliest})" if found
+             else "🎾 Padel – nema slobodnih termina")
+    if not args.dry_run:
+        notify(title, msg, success=bool(found), url=url)
+    return 0
+
+
+def run(args: argparse.Namespace) -> int:
     client = PlaytomicClient()
     tenant = client.get_tenant(args.tenant_id) if args.tenant_id else client.find_tenant(args.club)
     tenant_id = tenant["tenant_id"]
@@ -354,19 +482,26 @@ def main() -> int:
         raise SystemExit("Nisu pronađeni double tereni. Pokreni --list-courts i provjeri properties.")
     log.info("Double tereni: %s", ", ".join(courts.values()))
 
+    dates = target_dates(args)
+    if not dates:
+        log.info("Nema ciljanih datuma u zadanom rasponu.")
+        return 0
+    log.info("Ciljani datumi: %s", ", ".join(fmt_day(d) for d in dates))
+
+    if args.notify_only:
+        return run_notify_only(client, tenant, courts, dates, args)
+
     if not args.dry_run:
         email, password = os.environ.get("PLAYTOMIC_EMAIL"), os.environ.get("PLAYTOMIC_PASSWORD")
         if not email or not password:
             raise SystemExit("Postavi PLAYTOMIC_EMAIL i PLAYTOMIC_PASSWORD.")
         client.login(email, password)
 
-    dates = target_dates(args)
-    if not dates:
-        log.info("Nema ciljanih datuma u zadanom rasponu.")
-        return 0
-    log.info("Ciljani datumi: %s", ", ".join(d.strftime("%a %d.%m.") for d in dates))
+    if args.start_at:
+        wait_until(args.start_at, args.max_wait)
 
     state = load_state()
+    already = {d for d in dates if d.isoformat() in state}
     deadline = time.monotonic() + args.poll_timeout
     while True:
         pending = run_once(client, tenant_id, courts, dates, args, state)
@@ -376,7 +511,23 @@ def main() -> int:
         time.sleep(args.poll)
         dates = pending
 
-    if pending and not args.dry_run:
+    if args.dry_run:
+        return 0
+
+    booked = [
+        f"✅ {fmt_day(date.fromisoformat(k))} u {datetime.fromisoformat(v['start']).strftime('%H:%M')}"
+        f" – {v['court']} ({v['duration']} min, {v['price']})"
+        for k, v in sorted(state.items())
+        if date.fromisoformat(k) in set(target_dates(args)) - already
+    ]
+    failed = [f"❌ {fmt_day(d)} – nema slobodnog double terena {args.earliest}–{args.latest}"
+              for d in pending]
+    if booked or failed:
+        title = "🎾 Padel – rezervirano!" if not failed else (
+            "🎾 Padel – djelomično rezervirano" if booked else "🎾 Padel – NIJE rezervirano")
+        notify(title, "\n".join(booked + failed), success=not failed)
+
+    if pending:
         log.warning("Nije rezervirano za: %s", ", ".join(map(str, pending)))
         return 1
     return 0
