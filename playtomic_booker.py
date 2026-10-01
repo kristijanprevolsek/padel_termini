@@ -249,6 +249,8 @@ def save_state(state: dict) -> None:
 def notify(title: str, message: str, success: bool, url: str | None = None) -> None:
     """Pošalji obavijest preko ntfy.sh i/ili Telegrama (ako su konfigurirani)."""
     sent = False
+    if len(message) > 3500:  # ntfy/Telegram ograničenja duljine poruke
+        message = message[:3500].rsplit("\n", 1)[0] + "\n…"
     topic = os.environ.get("NTFY_TOPIC")
     if topic:
         try:

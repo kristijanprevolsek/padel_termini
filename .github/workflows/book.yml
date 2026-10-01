@@ -7,6 +7,14 @@ on:
         description: "Samo ispiši u log, bez obavijesti i rezervacije"
         type: boolean
         default: false
+      test_any_slot:
+        description: "Test: javi bilo koji slobodni termin (svi dani, cijeli dan) u sljedećih 7 dana"
+        type: boolean
+        default: false
+      ntfy_topic:
+        description: "ntfy topic (ako je prazno, koristi se secret NTFY_TOPIC)"
+        type: string
+        default: ""
   schedule:
     # Termini se otvaraju 7 dana unaprijed u 08:00 (Zagreb) -> pon/uto/sri otvaraju iduće pon/uto/sri.
     # GitHub cron je u UTC-u, pa postoje dva rasporeda (ljetno/zimsko vrijeme); pokreće se ~15 min
@@ -44,7 +52,7 @@ jobs:
       - name: Provjeri termine
         if: steps.gate.outputs.run == 'true'
         env:
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOPIC: ${{ inputs.ntfy_topic || secrets.NTFY_TOPIC }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PLAYTOMIC_EMAIL: ${{ secrets.PLAYTOMIC_EMAIL }}
@@ -57,6 +65,9 @@ jobs:
           # Zadano samo obavijest; automatska rezervacija samo uz repo varijablu BOOKING_MODE=book
           if [ "${{ vars.BOOKING_MODE }}" != "book" ]; then
             ARGS="$ARGS --notify-only"
+          fi
+          if [ "${{ inputs.test_any_slot }}" = "true" ]; then
+            ARGS="--notify-only --days-ahead 7 --days pon,uto,sri,cet,pet,sub,ned --earliest 00:00 --latest 23:59"
           fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS="$ARGS --dry-run"
