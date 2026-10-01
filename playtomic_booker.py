@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-API = "https://api.playtomic.io"
+API = os.environ.get("PLAYTOMIC_API", "https://api.app.playtomic.io")
 TZ = ZoneInfo("Europe/Zagreb")
 ZAGREB_COORDS = "45.8150,15.9819"
 WEEKDAY_NAMES = {"pon": 0, "uto": 1, "sri": 2, "cet": 3, "pet": 4, "sub": 5, "ned": 6}
@@ -266,6 +266,7 @@ def notify(title: str, message: str, success: bool, url: str | None = None) -> N
                 timeout=15,
             ).raise_for_status()
             sent = True
+            log.info("ntfy obavijest poslana")
         except requests.RequestException as exc:
             log.warning("ntfy obavijest nije poslana: %s", exc)
 
