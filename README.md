@@ -77,6 +77,23 @@ Primjer obavijesti:
   20:30 – Teren 1
 ```
 
+### ⚠️ Mora raditi s kućne mreže
+
+Playtomic (od 2026.) blokira zahtjeve s IP adresa datacentara, uključujući GitHubove servere
+(odgovor `403 Request blocked`). Zato skripta mora raditi na računalu na kućnoj mreži
+(PC, Mac, Raspberry Pi...). Dvije mogućnosti:
+
+**A) Self-hosted GitHub runner** (workflow ostaje isti):
+1. U repou: **Settings → Actions → Runners → New self-hosted runner** i slijedi upute za svoj OS
+   (instaliraj ga kao servis da radi i nakon restarta). Računalo mora biti upaljeno u 8:00.
+2. Dodaj repo varijablu `RUNNER` = `self-hosted`. Bez nje se workflow ne pokreće po rasporedu.
+
+**B) Obični cron / Task Scheduler** na svom računalu, pon/uto/sri u 07:55:
+
+```bash
+55 7 * * 1-3  cd ~/padel_termini && NTFY_TOPIC=... .venv/bin/python playtomic_booker.py --notify-only --exact-offset 7 --start-at 08:00 --poll 10 --poll-timeout 300
+```
+
 ### Postavljanje obavijesti (ntfy, najjednostavnije)
 
 1. Instaliraj aplikaciju **ntfy** (Android / iOS) i pretplati se na topic s nekim teško pogodivim

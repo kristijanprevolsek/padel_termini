@@ -24,7 +24,10 @@ on:
 
 jobs:
   padel:
-    runs-on: ubuntu-latest
+    # Playtomic blokira IP adrese iz datacentara (GitHubove servere), pa treba self-hosted runner
+    # na kućnoj mreži. Postavi repo varijablu RUNNER=self-hosted; bez nje se zakazano ne pokreće.
+    if: github.event_name == 'workflow_dispatch' || vars.RUNNER != ''
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Provjeri ljetno/zimsko vrijeme
         id: gate
