@@ -56,7 +56,7 @@ class Slot:
 # --- obavijesti ---------------------------------------------------------------
 def load_config() -> dict:
     if CONFIG_FILE.exists():
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8-sig"))
     return {}
 
 
