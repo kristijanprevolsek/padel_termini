@@ -39,6 +39,9 @@ import requests
 
 # --- postavke -----------------------------------------------------------------
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
+# link u obavijesti: na mobitelu s instaliranom Playtomic aplikacijom otvara klub u aplikaciji
+# (može se promijeniti u postavke.json pod "link")
+APP_LINK = "https://app.playtomic.io/tenant/2ea46d91-f7ed-4e4a-aa5c-392ee5995ad9"
 # raspon početka termina po danu u tjednu (0 = pon ... 6 = ned); dan koji nije naveden se preskače
 WORKDAY = ("17:00", "21:00")
 WEEKEND = ("09:00", "12:00")
@@ -73,6 +76,7 @@ def load_config() -> dict:
 
 
 def notify(topic: str | None, title: str, message: str, high: bool = False) -> None:
+    link = load_config().get("link", APP_LINK)
     print(f"\n=== {title} ===\n{message}\n")
     if not topic:
         print("(ntfy topic nije postavljen u postavke.json – obavijest nije poslana)")
@@ -84,8 +88,8 @@ def notify(topic: str | None, title: str, message: str, high: bool = False) -> N
             "Title": title.encode("utf-8"),
             "Tags": "tennis",
             "Priority": "high" if high else "default",
-            "Click": CLUB_URL,
-            "Actions": f"view, Otvori klub, {CLUB_URL}",
+            "Click": link,
+            "Actions": f"view, Otvori Playtomic, {link}",
         },
         timeout=15,
     )
