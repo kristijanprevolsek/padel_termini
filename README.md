@@ -1,122 +1,89 @@
 # padel_termini
 
-Skripta za obavijesti o slobodnim terminima i (opcionalno) automatsku rezervaciju padel termina na **Playtomicu** u klubu **Padel Embassy (Zagreb)**.
+Obavijest na mobitel o slobodnim **double** terenima (90 min, od 19:00) u **Padel Embassyju**
+za **ponedjeljak, utorak i srijedu**, i to u 8:00 kad se termini otvore (7 dana unaprijed).
 
-Zadano traži:
-- samo **double** terene
-- termine od **90 minuta**
-- s početkom **od 19:00 do 22:00**
-- **ponedjeljak, utorak, srijeda**
+Program na tvom računalu otvori javnu stranicu kluba
+(<https://playtomic.com/clubs/padel-embassy>) u pregledniku Edge, prebaci tablicu na dan
+za 7 dana, pročita slobodne termine i pošalje ti popis u aplikaciju **ntfy**. Rezerviraš sam,
+u Playtomic aplikaciji. Program ništa ne rezervira.
 
-i rezervira najraniji slobodni termin za svaki takav dan.
+> Playtomic blokira skripte koje izravno zovu njihov API, pa program čita samo ono što
+> stranica prikaže u pregledniku. Ako Playtomic promijeni stranicu ili počne blokirati i to,
+> program će javiti grešku.
 
-> ⚠️ Koristi neslužbeni Playtomic API (isti koji koristi njihova aplikacija). Može se promijeniti
-> bez najave, a automatizacija možda nije u skladu s uvjetima korištenja Playtomica — koristi na vlastitu odgovornost.
+## 1. Instalacija (jednom)
 
-## Instalacija
+1. Instaliraj **Python** s <https://www.python.org/downloads/>. U instalaciji označi
+   **„Add python.exe to PATH”**.
+2. Preuzmi ovaj repozitorij (zeleni gumb **Code → Download ZIP**) i raspakiraj ga npr. u
+   `Desktop\Cloude\playtomic_termini`.
+3. Otvori **PowerShell** u tom folderu (u Exploreru: desni klik u folderu → *Open in Terminal*)
+   i pokreni:
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export PLAYTOMIC_EMAIL="tvoj@email.com"
-export PLAYTOMIC_PASSWORD="lozinka"
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+
+   Edge već imaš, pa ne treba skidati poseban preglednik. Ako program javi da ne može
+   pokrenuti preglednik, pokreni još: `python -m playwright install chromium`
+
+## 2. Obavijesti na mobitelu
+
+1. Instaliraj aplikaciju **ntfy** (Android/iOS) i u njoj **Subscribe to topic** s nekim
+   teško pogodivim imenom, npr. `padel-embassy-k8x2q7`.
+2. U folderu kopiraj `postavke.example.json` u `postavke.json` i u njega upiši to ime:
+
+   ```json
+   { "ntfy_topic": "padel-embassy-k8x2q7" }
+   ```
+
+3. Probaj:
+
+   ```powershell
+   python padel_obavijest.py --test-notify
+   ```
+
+## 3. Prvi test na pravoj stranici
+
+```powershell
+python padel_obavijest.py --any --days-ahead 1 --show --debug
 ```
 
-## Prvo provjeri (bez rezervacije)
+Otvorit će se prozor preglednika, tablica će se pomaknuti na sutra, a na mobitel bi trebao
+stići popis slobodnih double termina od 90 min (`--any` znači bilo koji sat).
+Usporedi ga s tablicom na stranici.
 
-```bash
-# 1. Pronađi klub i ispiši sve terene (provjeri da su double tereni ispravno označeni)
-python playtomic_booker.py --list-courts
+**Ako ne radi**, u folderu `debug` su `stranica.png`, `stranica.html` i `odgovori.json`.
+Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 
-# 2. Što bi skripta rezervirala u sljedećih 14 dana
-python playtomic_booker.py --dry-run
+## 4. Automatsko pokretanje pon/uto/sri u 8:00
+
+U PowerShellu, **u folderu projekta**:
+
+```powershell
+schtasks /create /tn "Padel obavijest" /sc weekly /d MON,TUE,WED /st 07:58 /tr "$PWD\pokreni.bat"
 ```
 
-Usporedi ispisana vremena s onima u Playtomic aplikaciji. Ako su pomaknuta za 1–2 sata,
-dodaj `--times-utc`. Ako pretraga pronađe krivi klub, zapiši `tenant_id` iz ispisa i koristi `--tenant-id`.
+(Ako putanja do foldera sadrži razmak, zadatak radije napravi ručno u aplikaciji *Task Scheduler*:
+*Create Basic Task* → *Weekly* → pon, uto, sri u 07:58 → *Start a program* → `pokreni.bat`.)
 
-## Rezervacija
+`pokreni.bat` pričeka do 8:00, pročita termine za isti dan idući tjedan (ako termini kasne,
+pokušava još 5 minuta) i pošalje obavijest. Zapis svakog pokretanja je u `zapis.txt`.
 
-```bash
-# Rezerviraj sve slobodne pon/uto/sri termine u sljedećih 14 dana
-python playtomic_booker.py
+- **Računalo mora biti upaljeno** u 8:00. U *Task Scheduler* → *Padel obavijest* →
+  *Properties* → *Conditions* možeš uključiti **„Wake the computer to run this task”**
+  (radi iz sleepa, ne iz ugašenog računala).
+- Ručno pokretanje: `schtasks /run /tn "Padel obavijest"`
+- Brisanje: `schtasks /delete /tn "Padel obavijest" /f`
 
-# Čekaj otvaranje termina: traži samo datum za 7 dana, ponavljaj svakih 20 s do 15 min
-python playtomic_booker.py --exact-offset 7 --poll 20 --poll-timeout 900
-```
+## Postavke
 
-Uspješne rezervacije zapisuju se u `booked.json`, pa ponovno pokretanje ne rezervira isti dan dvaput.
+Na vrhu `padel_obavijest.py`:
 
-Korisne opcije:
-
-| Opcija | Zadano | Opis |
+| Postavka | Zadano | Značenje |
 |---|---|---|
-| `--days` | `pon,uto,sri` | dani u tjednu |
-| `--earliest` / `--latest` | `19:00` / `22:00` | raspon početka termina |
-| `--duration` | `90` | trajanje u minutama |
-| `--prefer-court` | – | dio naziva terena koji ima prednost (može više puta) |
-| `--payment` | `CASH,MERCHANT_WALLET,OFFER,DIRECT,CREDIT_CARD` | redoslijed metoda plaćanja |
-| `--tenant-id` | – | izravno zadaj klub |
-
-**Plaćanje:** ako klub traži plaćanje karticom s 3D Secure potvrdom, skripta to ne može dovršiti.
-Najbolje radi s plaćanjem u klubu (`CASH`) ili s Playtomic novčanikom kluba (`MERCHANT_WALLET`).
-
-## Dnevna obavijest o otvorenim terminima (preporučeno)
-
-Termini u Padel Embassyju otvaraju se **7 dana unaprijed u 08:00**. Workflow
-`.github/workflows/book.yml` svaki **ponedjeljak, utorak i srijedu** u 08:00 provjeri termine koji su
-se upravo otvorili (isti dan idući tjedan) i pošalje ti obavijest sa slobodnim double terminima
-(90 min, od 19:00) i linkom na klub, pa **rezerviraš sam**. Ne treba mu tvoja Playtomic lozinka.
-
-Primjer obavijesti:
-
-```
-🎾 Padel – otvoreni termini (90 min, od 19:00)
-📅 pon 12.10.:
-  19:00 – Teren 1, Teren 2
-  20:30 – Teren 1
-```
-
-### ⚠️ Mora raditi s kućne mreže
-
-Playtomic (od 2026.) blokira zahtjeve s IP adresa datacentara, uključujući GitHubove servere
-(odgovor `403 Request blocked`). Zato skripta mora raditi na računalu na kućnoj mreži
-(PC, Mac, Raspberry Pi...). Dvije mogućnosti:
-
-**A) Self-hosted GitHub runner** (workflow ostaje isti):
-1. U repou: **Settings → Actions → Runners → New self-hosted runner** i slijedi upute za svoj OS
-   (instaliraj ga kao servis da radi i nakon restarta). Računalo mora biti upaljeno u 8:00.
-2. Dodaj repo varijablu `RUNNER` = `self-hosted`. Bez nje se workflow ne pokreće po rasporedu.
-
-**B) Obični cron / Task Scheduler** na svom računalu, pon/uto/sri u 07:55:
-
-```bash
-55 7 * * 1-3  cd ~/padel_termini && NTFY_TOPIC=... .venv/bin/python playtomic_booker.py --notify-only --exact-offset 7 --start-at 08:00 --poll 10 --poll-timeout 300
-```
-
-### Postavljanje obavijesti (ntfy, najjednostavnije)
-
-1. Instaliraj aplikaciju **ntfy** (Android / iOS) i pretplati se na topic s nekim teško pogodivim
-   imenom, npr. `padel-embassy-k8x2q` (svatko tko zna ime topica može čitati poruke).
-2. U GitHub repou: **Settings → Secrets and variables → Actions → New repository secret**:
-   `NTFY_TOPIC` = `padel-embassy-k8x2q`.
-3. **Actions → Padel termini → Run workflow**: pošalje obavijest s trenutnim stanjem termina,
-   pa odmah vidiš radi li sve.
-
-Umjesto ntfy (ili uz njega) možeš koristiti Telegram: napravi bota preko `@BotFather` i dodaj secrete
-`TELEGRAM_BOT_TOKEN` i `TELEGRAM_CHAT_ID`.
-
-Ako skripta padne (npr. Playtomic promijeni API), dobiješ obavijest „❌ Padel – greška“, a
-GitHub ti dodatno pošalje e-mail o neuspjelom workflowu.
-
-Lokalno:
-
-```bash
-NTFY_TOPIC=padel-embassy-k8x2q python playtomic_booker.py --test-notify
-NTFY_TOPIC=padel-embassy-k8x2q python playtomic_booker.py --notify-only --exact-offset 7
-```
-
-### Automatska rezervacija (opcionalno)
-
-Ako ipak želiš da workflow sam rezervira, dodaj secrete `PLAYTOMIC_EMAIL` i `PLAYTOMIC_PASSWORD`
-i repo varijablu `BOOKING_MODE` = `book`. Obavijest tada javlja što je rezervirano, a što nije.
+| `DAYS` | `{0, 1, 2}` | pon, uto, sri |
+| `EARLIEST` / `LATEST` | `19:00` / `22:00` | raspon početka termina |
+| `DURATION` | `90` | trajanje u minutama |
+| `DAYS_AHEAD` | `7` | koliko dana unaprijed se termini otvaraju |
