@@ -58,6 +58,13 @@ Usporedi ga s tablicom na stranici.
 **Ako ne radi**, u folderu `debug` su `stranica.png`, `stranica.html` i `odgovori.json`.
 Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 
+### Linkovi na termine
+
+Ispod svakog termina u obavijesti je link koji otvara **plaćanje točno tog termina**
+(na prvom slobodnom terenu) u Playtomic aplikaciji, ili na webu ako aplikacija nije
+instalirana. Za prva tri termina su i gumbi ispod obavijesti, a dodir same obavijesti otvara
+klub. Link traži prijavu ako nisi prijavljen.
+
 ## 4. Automatsko praćenje
 
 Program pamti što ti je već javio (`stanje.json`) i šalje obavijest **samo za nove slobodne

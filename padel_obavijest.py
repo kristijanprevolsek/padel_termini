@@ -31,7 +31,8 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from urllib.parse import urlencode
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -39,9 +40,9 @@ import requests
 
 # --- postavke -----------------------------------------------------------------
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
-# link u obavijesti: na mobitelu s instaliranom Playtomic aplikacijom otvara klub u aplikaciji
-# (može se promijeniti u postavke.json pod "link")
-APP_LINK = "https://app.playtomic.io/tenant/2ea46d91-f7ed-4e4a-aa5c-392ee5995ad9"
+TENANT_ID = "2ea46d91-f7ed-4e4a-aa5c-392ee5995ad9"
+# link u obavijesti: otvara klub u Playtomic aplikaciji (može se promijeniti u postavke.json pod "link")
+APP_LINK = f"https://playtomic.com/tenant/{TENANT_ID}"
 # raspon početka termina po danu u tjednu (0 = pon ... 6 = ned); dan koji nije naveden se preskače
 WORKDAY = ("17:00", "21:00")
 WEEKEND = ("09:00", "12:00")
@@ -63,9 +64,20 @@ DAY_NAMES = ["pon", "uto", "sri", "čet", "pet", "sub", "ned"]
 @dataclass
 class Slot:
     court: str
-    start: str      # "HH:MM"
+    start: str      # "HH:MM", zagrebačko vrijeme
     duration: int
     price: str
+    resource_id: str = ""
+    start_utc: datetime | None = None
+
+
+def booking_url(slot: Slot) -> str:
+    """Link koji otvara plaćanje točno ovog termina (u aplikaciji ako je instalirana, inače web)."""
+    return "https://app.playtomic.com/payments?" + urlencode({
+        "type": "CUSTOMER_MATCH", "tenant_id": TENANT_ID, "resource_id": slot.resource_id,
+        "start": slot.start_utc.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "duration": str(slot.duration), "sport_id": "PADEL",
+    })
 
 
 # --- obavijesti ---------------------------------------------------------------
@@ -75,8 +87,12 @@ def load_config() -> dict:
     return {}
 
 
-def notify(topic: str | None, title: str, message: str, high: bool = False) -> None:
+def notify(topic: str | None, title: str, message: str, high: bool = False,
+           buttons: list[tuple[str, str]] | None = None) -> None:
+    """buttons: do 3 gumba (natpis, link) ispod obavijesti; bez njih gumb otvara klub."""
     link = load_config().get("link", APP_LINK)
+    buttons = (buttons or [])[:3] or [("Otvori Playtomic", link)]
+    actions = "; ".join(f"view, {label.replace(',', ' ')}, {url}" for label, url in buttons)
     print(f"\n=== {title} ===\n{message}\n")
     if not topic:
         print("(ntfy topic nije postavljen u postavke.json – obavijest nije poslana)")
@@ -89,7 +105,7 @@ def notify(topic: str | None, title: str, message: str, high: bool = False) -> N
             "Tags": "tennis",
             "Priority": "high" if high else "default",
             "Click": link,
-            "Actions": f"view, Otvori Playtomic, {link}",
+            "Actions": actions.encode("utf-8"),
         },
         timeout=15,
     )
@@ -150,7 +166,7 @@ def slots_for_day(entries: list[dict], courts: dict, day: date, any_slot: bool) 
             dur = int(s.get("duration", 0))
             if start_dt.date() != day or dur != DURATION or not (lo <= start <= hi):
                 continue
-            out[(name, start)] = Slot(name, start, dur, str(s.get("price", "")))
+            out[(name, start)] = Slot(name, start, dur, str(s.get("price", "")), rid, start_dt)
     return sorted(out.values(), key=lambda s: (s.start, s.court))
 
 
@@ -318,11 +334,20 @@ def fmt_day(d: date) -> str:
     return f"{DAY_NAMES[d.weekday()]} {d.strftime('%d.%m.')}"
 
 
-def format_day(d: date, slots: list[Slot]) -> list[str]:
-    by_time: dict[str, list[str]] = {}
+def format_day(d: date, slots: list[Slot], buttons: list | None = None) -> list[str]:
+    """Termini po satu; ispod svakog sata link na plaćanje (prvi slobodni teren).
+    Ako je zadan popis buttons, dodaje u njega (natpis, link) za gumbe u obavijesti."""
+    by_time: dict[str, list[Slot]] = {}
     for s in slots:
-        by_time.setdefault(s.start, []).append(s.court.split(" ///")[0])
-    return [f"📅 {fmt_day(d)}:"] + [f"  {t} – {', '.join(c)}" for t, c in by_time.items()]
+        by_time.setdefault(s.start, []).append(s)
+    lines = [f"📅 {fmt_day(d)}:"]
+    for t, group in by_time.items():
+        lines.append(f"  {t} – {', '.join(s.court.split(' ///')[0] for s in group)}")
+        url = booking_url(group[0])
+        lines.append(f"  👉 {url}")
+        if buttons is not None:
+            buttons.append((f"{fmt_day(d)} {t} {group[0].court.split(' ///')[0]}", url))
+    return lines
 
 
 # --- praćenje svakih 10 minuta -------------------------------------------------------
@@ -407,6 +432,7 @@ def _watch(args, topic: str | None) -> int:
     prev = state.get("slots", {})
     current = {k: v for k, v in prev.items() if k >= today.isoformat()}
     lines = []
+    buttons: list[tuple[str, str]] = []
     for d in have:
         slots = slots_for_day(entries, courts, d, args.any)
         if d == today:  # termini koji su već počeli
@@ -416,7 +442,7 @@ def _watch(args, topic: str | None) -> int:
         current[d.isoformat()] = sorted(f"{s.start}|{s.court}" for s in slots)
         print(f"{fmt_day(d)}: slobodno {len(slots)}, novo {len(new)}")
         if new:
-            lines += format_day(d, new)
+            lines += format_day(d, new, buttons)
     state["slots"] = current
     state.pop("last_error_notified", None)  # sve radi – sljedeća greška se opet javlja odmah
     save_state(state)
@@ -425,7 +451,8 @@ def _watch(args, topic: str | None) -> int:
     if missing:
         print(f"Nema podataka za: {', '.join(missing)}")
     if lines:
-        notify(topic, f"🆕 Padel – novi slobodni termini ({DURATION} min)", "\n".join(lines))
+        notify(topic, f"🆕 Padel – novi slobodni termini ({DURATION} min)", "\n".join(lines),
+               buttons=buttons)
     else:
         print("Nema novih termina.")
     return 0
@@ -511,7 +538,9 @@ def main() -> int:
                f"{fmt_day(target)}: nema slobodnog double terena ({DURATION} min{rng}).")
         return 0
 
-    notify(topic, f"🎾 Padel – slobodni termini ({DURATION} min)", "\n".join(format_day(target, slots)))
+    buttons: list[tuple[str, str]] = []
+    lines = format_day(target, slots, buttons)
+    notify(topic, f"🎾 Padel – slobodni termini ({DURATION} min)", "\n".join(lines), buttons=buttons)
     return 0
 
 
