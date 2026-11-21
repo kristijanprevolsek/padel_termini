@@ -16,11 +16,19 @@ Primjeri:
 
 from __future__ import annotations
 
+import sys
+
+if sys.stdout is None:  # pythonw.exe (Task Scheduler): bez konzole – sve odmah u zapis.txt
+    import os as _os
+    _log = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "zapis.txt"),
+                "a", encoding="utf-8", errors="replace", buffering=1)
+    sys.stdout = sys.stderr = _log
+    print("\n--- pokrenuto bez konzole:", " ".join(sys.argv))
+
 import argparse
 import json
 import os
 import re
-import sys
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
