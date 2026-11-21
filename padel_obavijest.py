@@ -42,8 +42,6 @@ CONFIG_FILE = HERE / "postavke.json"
 DEBUG_DIR = HERE / "debug"
 DAY_NAMES = ["pon", "uto", "sri", "čet", "pet", "sub", "ned"]
 
-NEXT_BUTTON_NAMES = re.compile(r"next|sljede|naprijed|siguiente|weiter|suivant|forward", re.I)
-
 
 @dataclass
 class Slot:
@@ -147,19 +145,21 @@ def launch(p, show: bool):
 
 
 DATE_LABEL_JS = r"""() => {
-  // pronađi kratki natpis s datumom pored strelica (npr. "ned, 22. stu" ili "Sun, 22 Nov")
-  const els = [...document.querySelectorAll('span,div,p,button,h2,h3')];
+  // natpis s datumom iznad tablice, npr. "sub, 21. stu" ili "Sat, 21 Nov"
+  const re = /^[^\s,]{2,12},\s*\d{1,2}\.?\s*[^\s]{2,12}\.?$/;
+  const els = [...document.querySelectorAll('body *')].filter(el =>
+    el.offsetWidth > 0 && ![...el.children].some(c => c.tagName !== 'svg' && c.tagName !== 'BR') &&
+    re.test((el.innerText || '').trim()));
   for (const el of els) {
-    const t = (el.innerText || '').trim();
-    if (t.length < 5 || t.length > 25 || el.children.length > 1) continue;
-    if (!/\d/.test(t) || !/,/.test(t)) continue;
+    // strelica za sljedeći dan = prvi vidljivi gumb iza natpisa u istom bloku
     let box = el.parentElement;
-    for (let i = 0; i < 3 && box; i++, box = box.parentElement) {
-      const btns = [...box.querySelectorAll('button')].filter(b => b.offsetWidth > 0);
-      if (btns.length >= 2) {
-        btns.forEach(b => b.removeAttribute('data-padel-next'));
-        btns[btns.length - 1].setAttribute('data-padel-next', '1');
-        return t;
+    for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
+      const next = [...box.querySelectorAll('button')].find(b => b.offsetWidth > 0 &&
+        (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) && !b.contains(el));
+      if (next) {
+        document.querySelectorAll('[data-padel-next]').forEach(b => b.removeAttribute('data-padel-next'));
+        next.setAttribute('data-padel-next', '1');
+        return el.innerText.trim();
       }
     }
   }
@@ -181,13 +181,9 @@ def accept_cookies(page) -> None:
 
 def click_next_day(page) -> str | None:
     """Klikni strelicu za sljedeći dan; vrati natpis datuma nakon klika."""
-    btn = page.get_by_role("button", name=NEXT_BUTTON_NAMES)
-    if btn.count() and btn.first.is_visible():
-        btn.first.click()
-    else:
-        if page.evaluate(DATE_LABEL_JS) is None:
-            return None
-        page.locator("[data-padel-next='1']").first.click()
+    if page.evaluate(DATE_LABEL_JS) is None:
+        return None
+    page.locator("[data-padel-next='1']").first.click()
     try:
         page.wait_for_load_state("networkidle", timeout=15000)
     except Exception:
@@ -244,8 +240,12 @@ def read_page(target: date, show: bool, debug: bool) -> tuple[list[dict], dict, 
         browser.close()
 
     entries = []
-    for _, data in responses:
-        entries += find_availability(data)
+    for url, data in responses:
+        found = find_availability(data)
+        entries += found
+        if debug:
+            days = sorted({str(e.get("start_date", "?"))[:10] for e in found})
+            print(f"  JSON {url[:110]} -> termina: {len(found)} {days if found else ''}")
     return entries, courts_from_html(html), label or ""
 
 
