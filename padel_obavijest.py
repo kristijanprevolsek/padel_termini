@@ -89,7 +89,8 @@ def load_config() -> dict:
 
 def notify(topic: str | None, title: str, message: str, high: bool = False,
            buttons: list[tuple[str, str]] | None = None) -> None:
-    """buttons: do 3 gumba (natpis, link) ispod obavijesti; bez njih gumb otvara klub."""
+    """buttons: do 3 gumba (natpis, link) ispod obavijesti; bez njih gumb otvara klub.
+    Dodir same obavijesti otvara aplikaciju ntfy (namjerno bez linka), pa termin biraš gumbom."""
     link = load_config().get("link", APP_LINK)
     buttons = (buttons or [])[:3] or [("Otvori Playtomic", link)]
     actions = "; ".join(f"view, {label.replace(',', ' ')}, {url}" for label, url in buttons)
@@ -104,7 +105,6 @@ def notify(topic: str | None, title: str, message: str, high: bool = False,
             "Title": title.encode("utf-8"),
             "Tags": "tennis",
             "Priority": "high" if high else "default",
-            "Click": link,
             "Actions": actions.encode("utf-8"),
         },
         timeout=15,
@@ -334,18 +334,38 @@ def fmt_day(d: date) -> str:
     return f"{DAY_NAMES[d.weekday()]} {d.strftime('%d.%m.')}"
 
 
-def format_day(d: date, slots: list[Slot], buttons: list | None = None) -> list[str]:
-    """Svaki teren u svom retku, ispod njega link na plaćanje točno tog terena i termina.
-    Ako je zadan popis buttons, dodaje u njega (natpis, link) za gumbe u obavijesti."""
-    lines = [f"📅 {fmt_day(d)}:"]
-    for s in sorted(slots, key=lambda s: (s.start, s.court)):
+MAX_NOTIFICATIONS = 5  # najviše obavijesti po provjeri (ostatak ide popisom u zadnjoj)
+
+
+def notify_slots(topic: str | None, title: str, slots: list[Slot]) -> None:
+    """Termini po 3 u obavijesti (ntfy dopušta 3 gumba); svaki gumb otvara plaćanje tog terena."""
+    slots = sorted(slots, key=lambda s: (s.start_utc, s.court))
+    chunks = [slots[i:i + 3] for i in range(0, len(slots), 3)]
+    if len(chunks) > MAX_NOTIFICATIONS:
+        rest = [s for c in chunks[MAX_NOTIFICATIONS - 1:] for s in c]
+        chunks = chunks[:MAX_NOTIFICATIONS - 1]
+    else:
+        rest = []
+
+    def describe(s: Slot) -> tuple[str, str]:
+        d = s.start_utc.astimezone(TZ).date()
         court = s.court.split(" ///")[0]
-        url = booking_url(s)
-        lines.append(f"  {s.start} – {court}")
-        lines.append(f"  👉 {url}")
-        if buttons is not None:
-            buttons.append((f"{fmt_day(d)} {s.start} {court}", url))
-    return lines
+        short = court.replace("Court ", "C")
+        return f"{fmt_day(d)} {s.start} – {court}", f"{DAY_NAMES[d.weekday()]} {s.start} {short}"
+
+    total = len(chunks) + (1 if rest else 0)
+    for i, chunk in enumerate(chunks, 1):
+        lines, buttons = [], []
+        for s in chunk:
+            text, label = describe(s)
+            lines.append(f"🎾 {text}")
+            buttons.append((label, booking_url(s)))
+        suffix = f" ({i}/{total})" if total > 1 else ""
+        notify(topic, title + suffix, "\n".join(lines), buttons=buttons)
+    if rest:
+        lines = [describe(s)[0] for s in rest]
+        notify(topic, f"{title} ({total}/{total}) – još {len(rest)}",
+               "\n".join(lines) + "\n\nOvi su bez gumba – otvori klub u aplikaciji.")
 
 
 # --- praćenje svakih 10 minuta -------------------------------------------------------
@@ -429,8 +449,7 @@ def _watch(args, topic: str | None) -> int:
 
     prev = state.get("slots", {})
     current = {k: v for k, v in prev.items() if k >= today.isoformat()}
-    lines = []
-    buttons: list[tuple[str, str]] = []
+    new_slots: list[Slot] = []
     for d in have:
         slots = slots_for_day(entries, courts, d, args.any)
         if d == today:  # termini koji su već počeli
@@ -439,8 +458,7 @@ def _watch(args, topic: str | None) -> int:
         new = [s for s in slots if f"{s.start}|{s.court}" not in old]
         current[d.isoformat()] = sorted(f"{s.start}|{s.court}" for s in slots)
         print(f"{fmt_day(d)}: slobodno {len(slots)}, novo {len(new)}")
-        if new:
-            lines += format_day(d, new, buttons)
+        new_slots += new
     state["slots"] = current
     state.pop("last_error_notified", None)  # sve radi – sljedeća greška se opet javlja odmah
     save_state(state)
@@ -448,9 +466,8 @@ def _watch(args, topic: str | None) -> int:
     missing = [fmt_day(d) for d in days if d not in have]
     if missing:
         print(f"Nema podataka za: {', '.join(missing)}")
-    if lines:
-        notify(topic, f"🆕 Padel – novi slobodni termini ({DURATION} min)", "\n".join(lines),
-               buttons=buttons)
+    if new_slots:
+        notify_slots(topic, f"🆕 Padel – novi termini ({DURATION} min)", new_slots)
     else:
         print("Nema novih termina.")
     return 0
@@ -536,9 +553,7 @@ def main() -> int:
                f"{fmt_day(target)}: nema slobodnog double terena ({DURATION} min{rng}).")
         return 0
 
-    buttons: list[tuple[str, str]] = []
-    lines = format_day(target, slots, buttons)
-    notify(topic, f"🎾 Padel – slobodni termini ({DURATION} min)", "\n".join(lines), buttons=buttons)
+    notify_slots(topic, f"🎾 Padel – slobodni termini ({DURATION} min)", slots)
     return 0
 
 

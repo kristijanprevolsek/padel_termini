@@ -60,10 +60,10 @@ Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 
 ### Linkovi na termine
 
-Ispod svakog termina u obavijesti je link koji otvara **plaćanje točno tog termina**
+Svaki termin ima gumb koji otvara **plaćanje točno tog termina**
 za svaki teren posebno, u Playtomic aplikaciji, ili na webu ako aplikacija nije
-instalirana. Za prva tri termina su i gumbi ispod obavijesti, a dodir same obavijesti otvara
-klub. Link traži prijavu ako nisi prijavljen.
+instalirana. Termini dolaze po tri u obavijesti, svaki sa svojim gumbom; dodir same obavijesti otvara
+aplikaciju ntfy, gdje vidiš sve termine i biraš gumb. Link traži prijavu ako nisi prijavljen.
 
 ## 4. Automatsko praćenje
 
