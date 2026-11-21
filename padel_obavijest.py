@@ -33,7 +33,7 @@ import requests
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
 DAYS = {0, 1, 2}            # pon, uto, sri
 EARLIEST = "17:00"          # najraniji početak
-LATEST = "22:00"            # najkasniji početak
+LATEST = "21:00"            # najkasniji početak
 DURATION = 90               # minuta
 DAYS_AHEAD = 7              # termini se otvaraju 7 dana unaprijed
 

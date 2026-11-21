@@ -1,6 +1,6 @@
 # padel_termini
 
-Obavijest na mobitel o slobodnim **double** terenima (90 min, početak 17–22 h) u **Padel Embassyju**
+Obavijest na mobitel o slobodnim **double** terenima (90 min, početak 17–21 h) u **Padel Embassyju**
 za **ponedjeljak, utorak i srijedu**, i to u 8:00 kad se termini otvore (7 dana unaprijed).
 
 Program na tvom računalu otvori javnu stranicu kluba
@@ -91,6 +91,6 @@ Na vrhu `padel_obavijest.py`:
 | Postavka | Zadano | Značenje |
 |---|---|---|
 | `DAYS` | `{0, 1, 2}` | pon, uto, sri |
-| `EARLIEST` / `LATEST` | `17:00` / `22:00` | raspon početka termina |
+| `EARLIEST` / `LATEST` | `17:00` / `21:00` | raspon početka termina |
 | `DURATION` | `90` | trajanje u minutama |
 | `DAYS_AHEAD` | `7` | koliko dana unaprijed se termini otvaraju |
