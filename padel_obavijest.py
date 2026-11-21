@@ -137,11 +137,14 @@ def slots_for_day(entries: list[dict], courts: dict, day: date, any_slot: bool) 
 
 
 # --- preglednik --------------------------------------------------------------------
-def launch(p, show: bool):
+def launch(p, show: bool, headless: bool):
+    # Playtomic skrivenom (headless) pregledniku ne prikazuje termine, pa se otvara
+    # normalan prozor; bez --show se postavi izvan ekrana da ne smeta.
+    args = [] if show or headless else ["--window-position=-3000,-3000"]
     last = None
     for channel in ("msedge", "chrome", None):
         try:
-            kwargs = {"headless": not show}
+            kwargs = {"headless": headless, "args": args}
             if channel:
                 kwargs["channel"] = channel
             browser = p.chromium.launch(**kwargs)
@@ -222,12 +225,14 @@ def click_next_day(page) -> str | None:
     return page.evaluate(DATE_LABEL_JS)
 
 
-def read_page(target: date, show: bool, debug: bool) -> tuple[list[dict], dict, str]:
+def read_page(target: date, show: bool, debug: bool, headless: bool = False) -> tuple[list[dict], dict, str]:
     from playwright.sync_api import sync_playwright
 
     responses: list[tuple[str, object]] = []
 
     def on_response(resp):
+        if debug and "availability" in resp.url:
+            print(f"  [{resp.status}] {resp.url[:120]}")
         if "json" not in resp.headers.get("content-type", ""):
             return
         try:
@@ -236,7 +241,7 @@ def read_page(target: date, show: bool, debug: bool) -> tuple[list[dict], dict, 
             pass
 
     with sync_playwright() as p:
-        browser = launch(p, show)
+        browser = launch(p, show, headless)
         ctx = browser.new_context(locale="hr-HR", timezone_id="Europe/Zagreb",
                                   viewport={"width": 1366, "height": 900})
         page = ctx.new_page()
@@ -309,6 +314,8 @@ def main() -> int:
     ap.add_argument("--retry-minutes", type=int, default=5,
                     help="ako termini još nisu otvoreni, pokušavaj ovoliko minuta")
     ap.add_argument("--show", action="store_true", help="prikaži prozor preglednika")
+    ap.add_argument("--headless", action="store_true",
+                    help="skriveni preglednik (Playtomic mu možda ne prikaže termine)")
     ap.add_argument("--debug", action="store_true", help="spremi screenshot i podatke u mapu debug")
     ap.add_argument("--test-notify", action="store_true", help="pošalji probnu obavijest i izađi")
     args = ap.parse_args()
@@ -328,7 +335,7 @@ def main() -> int:
     deadline = time.monotonic() + args.retry_minutes * 60
     try:
         while True:
-            entries, courts, label = read_page(target, args.show, args.debug)
+            entries, courts, label = read_page(target, args.show, args.debug, args.headless)
             day_entries = [e for e in entries if str(e.get("start_date", ""))[:10] == target.isoformat()]
             if day_entries or time.monotonic() >= deadline:
                 break
