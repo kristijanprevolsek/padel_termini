@@ -69,7 +69,7 @@ prozora), a ispis ide u `zapis.txt`:
 
 ```powershell
 $py = Join-Path (Split-Path (python -c "import sys; print(sys.executable)")) pythonw.exe
-$cmd = "$py $PWD\padel_obavijest.py --watch --log $PWD\zapis.txt"
+$cmd = "$py $PWD\padel_obavijest.py --watch --log zapis.txt"
 # svakih 10 minuta
 schtasks /create /f /tn "Padel provjera" /sc minute /mo 10 /tr $cmd
 # pon/uto/sri u 7:58 – čeka točno 8:00, kad se otvori novi dan
