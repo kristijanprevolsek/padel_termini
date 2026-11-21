@@ -335,18 +335,16 @@ def fmt_day(d: date) -> str:
 
 
 def format_day(d: date, slots: list[Slot], buttons: list | None = None) -> list[str]:
-    """Termini po satu; ispod svakog sata link na plaćanje (prvi slobodni teren).
+    """Svaki teren u svom retku, ispod njega link na plaćanje točno tog terena i termina.
     Ako je zadan popis buttons, dodaje u njega (natpis, link) za gumbe u obavijesti."""
-    by_time: dict[str, list[Slot]] = {}
-    for s in slots:
-        by_time.setdefault(s.start, []).append(s)
     lines = [f"📅 {fmt_day(d)}:"]
-    for t, group in by_time.items():
-        lines.append(f"  {t} – {', '.join(s.court.split(' ///')[0] for s in group)}")
-        url = booking_url(group[0])
+    for s in sorted(slots, key=lambda s: (s.start, s.court)):
+        court = s.court.split(" ///")[0]
+        url = booking_url(s)
+        lines.append(f"  {s.start} – {court}")
         lines.append(f"  👉 {url}")
         if buttons is not None:
-            buttons.append((f"{fmt_day(d)} {t} {group[0].court.split(' ///')[0]}", url))
+            buttons.append((f"{fmt_day(d)} {s.start} {court}", url))
     return lines
 
 
