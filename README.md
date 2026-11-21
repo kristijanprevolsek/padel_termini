@@ -63,7 +63,8 @@ Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 **Udarni termini** (pon–pet, početak 17–21 h) dolaze po tri u obavijesti, svaki sa svojim
 gumbom (npr. „pon 17:00 C1”) koji otvara **plaćanje točno tog terena i termina** u Playtomic
 aplikaciji (ili na webu, uz prijavu). Ostali termini (vikend) dolaze u jednoj obavijesti
-„– ostali”, samo kao popis, bez gumba. Dodir same obavijesti otvara aplikaciju ntfy.
+„– ostali” kao popis, s jednim gumbom „Otvori klub” (klub u Playtomicu). Dodir same
+obavijesti otvara aplikaciju ntfy.
 
 ## 4. Automatsko praćenje
 

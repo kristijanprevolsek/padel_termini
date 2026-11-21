@@ -41,6 +41,9 @@ import requests
 # --- postavke -----------------------------------------------------------------
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
 TENANT_ID = "2ea46d91-f7ed-4e4a-aa5c-392ee5995ad9"
+# gumb na obavijesti s ostalim terminima: otvara klub u Playtomicu (može se promijeniti
+# u postavke.json pod "link")
+CLUB_LINK = f"https://playtomic.com/tenant/{TENANT_ID}"
 # raspon početka termina po danu u tjednu (0 = pon ... 6 = ned); dan koji nije naveden se preskače
 WORKDAY = ("17:00", "21:00")
 WEEKEND = ("09:00", "12:00")
@@ -364,7 +367,9 @@ def notify_slots(topic: str | None, title: str, slots: list[Slot]) -> None:
         suffix = f" ({i}/{len(chunks)})" if len(chunks) > 1 else ""
         notify(topic, title + suffix, "\n".join(lines), buttons=buttons)
     if other:
-        notify(topic, f"{title} – ostali", "\n".join("🎾 " + describe(s)[0] for s in other))
+        club = load_config().get("link", CLUB_LINK)
+        notify(topic, f"{title} – ostali", "\n".join("🎾 " + describe(s)[0] for s in other),
+               buttons=[("Otvori klub", club)])
 
 
 # --- praćenje svakih 10 minuta -------------------------------------------------------
