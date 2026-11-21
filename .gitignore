@@ -3,3 +3,5 @@ __pycache__/
 postavke.json
 debug/
 zapis.txt
+stanje.json
+provjera.lock

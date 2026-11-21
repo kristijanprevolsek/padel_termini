@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -31,7 +32,7 @@ import requests
 # --- postavke -----------------------------------------------------------------
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
 DAYS = {0, 1, 2}            # pon, uto, sri
-EARLIEST = "19:00"          # najraniji početak
+EARLIEST = "17:00"          # najraniji početak
 LATEST = "22:00"            # najkasniji početak
 DURATION = 90               # minuta
 DAYS_AHEAD = 7              # termini se otvaraju 7 dana unaprijed
@@ -39,6 +40,10 @@ DAYS_AHEAD = 7              # termini se otvaraju 7 dana unaprijed
 TZ = ZoneInfo("Europe/Zagreb")
 HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "postavke.json"
+STATE_FILE = HERE / "stanje.json"     # termini javljeni u prethodnoj provjeri
+LOCK_FILE = HERE / "provjera.lock"    # sprječava dvije provjere istovremeno
+NIGHT = (23, 7)                       # noću (23–7 h) se ne provjerava
+ERROR_PAUSE_HOURS = 2                 # greške javljaj najviše jednom u ovoliko sati
 DEBUG_DIR = HERE / "debug"
 DAY_NAMES = ["pon", "uto", "sri", "čet", "pet", "sub", "ned"]
 
@@ -300,6 +305,119 @@ def fmt_day(d: date) -> str:
     return f"{DAY_NAMES[d.weekday()]} {d.strftime('%d.%m.')}"
 
 
+def format_day(d: date, slots: list[Slot]) -> list[str]:
+    by_time: dict[str, list[str]] = {}
+    for s in slots:
+        by_time.setdefault(s.start, []).append(s.court.split(" ///")[0])
+    return [f"📅 {fmt_day(d)}:"] + [f"  {t} – {', '.join(c)}" for t, c in by_time.items()]
+
+
+# --- praćenje svakih 10 minuta -------------------------------------------------------
+def load_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def acquire_lock() -> bool:
+    for _ in range(2):
+        try:
+            os.close(os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return True
+        except FileExistsError:
+            # zaostala brava od srušene provjere
+            if time.time() - LOCK_FILE.stat().st_mtime < 15 * 60:
+                return False
+            LOCK_FILE.unlink(missing_ok=True)
+    return False
+
+
+def notify_error(topic: str | None, state: dict, message: str) -> None:
+    last = state.get("last_error_notified", 0)
+    if time.time() - last >= ERROR_PAUSE_HOURS * 3600:
+        notify(topic, "❌ Padel – greška", message, high=True)
+        state["last_error_notified"] = time.time()
+    else:
+        print(f"Greška (obavijest već poslana nedavno): {message}")
+    save_state(state)
+
+
+def watch(args, topic: str | None) -> int:
+    now = datetime.now(TZ)
+    if not args.start_at and (now.hour >= NIGHT[0] or now.hour < NIGHT[1]):
+        print("Noć je – preskačem provjeru.")
+        return 0
+    if not acquire_lock():
+        print("Druga provjera je upravo u tijeku – preskačem.")
+        return 0
+    try:
+        return _watch(args, topic)
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+
+
+def _watch(args, topic: str | None) -> int:
+    if args.start_at:
+        wait_until(args.start_at)
+    now = datetime.now(TZ)
+    today = now.date()
+    last = today + timedelta(days=args.days_ahead)
+    days = [today + timedelta(days=i) for i in range(args.days_ahead + 1)]
+    days = [d for d in days if args.any or d.weekday() in DAYS]
+    state = load_state()
+
+    deadline = time.monotonic() + args.retry_minutes * 60
+    try:
+        while True:
+            entries, courts, label = read_page(last, args.show, args.debug, args.headless)
+            loaded = {str(e.get("start_date", ""))[:10] for e in entries}
+            have = [d for d in days if d.isoformat() in loaded]
+            # u 8:00 pričekaj da se otvori zadnji dan
+            if not args.start_at or (days and days[-1] in have) or time.monotonic() >= deadline:
+                break
+            print("Novi dan još nije otvoren – pokušavam ponovno za 20 s.")
+            time.sleep(20)
+    except Exception as exc:
+        notify_error(topic, state, f"Program nije uspio pročitati stranicu: {exc}")
+        raise
+
+    if not have:
+        notify_error(topic, state, f"Nisam uspio pročitati termine (prikazano: {label}). "
+                                   "Pokreni s --show --debug.")
+        return 1
+
+    prev = state.get("slots", {})
+    current = {k: v for k, v in prev.items() if k >= today.isoformat()}
+    lines = []
+    for d in have:
+        slots = slots_for_day(entries, courts, d, args.any)
+        if d == today:  # termini koji su već počeli
+            slots = [s for s in slots if s.start > now.strftime("%H:%M")]
+        old = set(prev.get(d.isoformat(), []))
+        new = [s for s in slots if f"{s.start}|{s.court}" not in old]
+        current[d.isoformat()] = sorted(f"{s.start}|{s.court}" for s in slots)
+        print(f"{fmt_day(d)}: slobodno {len(slots)}, novo {len(new)}")
+        if new:
+            lines += format_day(d, new)
+    state["slots"] = current
+    state.pop("last_error_notified", None)  # sve radi – sljedeća greška se opet javlja odmah
+    save_state(state)
+
+    missing = [fmt_day(d) for d in days if d not in have]
+    if missing:
+        print(f"Nema podataka za: {', '.join(missing)}")
+    if lines:
+        notify(topic, f"🆕 Padel – novi slobodni termini ({DURATION} min)", "\n".join(lines))
+    else:
+        print("Nema novih termina.")
+    return 0
+
+
 def main() -> int:
     # Windows konzola/datoteka inače ne zna ispisati emoji i hrvatska slova
     for stream in (sys.stdout, sys.stderr):
@@ -317,6 +435,8 @@ def main() -> int:
     ap.add_argument("--headless", action="store_true",
                     help="skriveni preglednik (Playtomic mu možda ne prikaže termine)")
     ap.add_argument("--debug", action="store_true", help="spremi screenshot i podatke u mapu debug")
+    ap.add_argument("--watch", action="store_true",
+                    help="provjeri sve pon/uto/sri do --days-ahead i javi samo NOVE termine")
     ap.add_argument("--test-notify", action="store_true", help="pošalji probnu obavijest i izađi")
     args = ap.parse_args()
 
@@ -324,6 +444,8 @@ def main() -> int:
     if args.test_notify:
         notify(topic, "🎾 Padel – probna obavijest", "Obavijesti rade!")
         return 0
+    if args.watch:
+        return watch(args, topic)
 
     if args.start_at:
         wait_until(args.start_at)
@@ -361,12 +483,7 @@ def main() -> int:
                f"{fmt_day(target)}: nema slobodnog double terena ({DURATION} min{rng}).")
         return 0
 
-    by_time: dict[str, list[str]] = {}
-    for s in slots:
-        by_time.setdefault(s.start, []).append(s.court.split(" ///")[0])
-    lines = [f"📅 {fmt_day(target)} ({DURATION} min):"]
-    lines += [f"  {t} – {', '.join(c)}" for t, c in by_time.items()]
-    notify(topic, "🎾 Padel – slobodni termini!", "\n".join(lines))
+    notify(topic, f"🎾 Padel – slobodni termini ({DURATION} min)", "\n".join(format_day(target, slots)))
     return 0
 
 

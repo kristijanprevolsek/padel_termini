@@ -1,6 +1,6 @@
 # padel_termini
 
-Obavijest na mobitel o slobodnim **double** terenima (90 min, od 19:00) u **Padel Embassyju**
+Obavijest na mobitel o slobodnim **double** terenima (90 min, početak 17–22 h) u **Padel Embassyju**
 za **ponedjeljak, utorak i srijedu**, i to u 8:00 kad se termini otvore (7 dana unaprijed).
 
 Program na tvom računalu otvori javnu stranicu kluba
@@ -57,25 +57,32 @@ Usporedi ga s tablicom na stranici.
 **Ako ne radi**, u folderu `debug` su `stranica.png`, `stranica.html` i `odgovori.json`.
 Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 
-## 4. Automatsko pokretanje pon/uto/sri u 8:00
+## 4. Automatsko praćenje
 
-U PowerShellu, **u folderu projekta**:
+Program pamti što ti je već javio (`stanje.json`) i šalje obavijest **samo za nove slobodne
+termine**: kad se otvori novi dan ili kad netko otkaže. Svaka provjera gleda sve
+pon/uto/sri od danas do 7 dana unaprijed. Noću (23–7 h) ne provjerava, a greške javlja
+najviše jednom u 2 sata.
+
+U PowerShellu, **u folderu projekta**, napravi dva zadatka:
 
 ```powershell
-schtasks /create /tn "Padel obavijest" /sc weekly /d MON,TUE,WED /st 07:58 /tr "$PWD\pokreni.bat"
+# svakih 10 minuta
+schtasks /create /tn "Padel provjera" /sc minute /mo 10 /tr "wscript.exe $PWD\tiho.vbs"
+# pon/uto/sri u 7:58 – čeka točno 8:00, kad se otvori novi dan
+schtasks /create /tn "Padel obavijest" /sc weekly /d MON,TUE,WED /st 07:58 /tr "wscript.exe $PWD\tiho.vbs pokreni.bat"
 ```
 
-(Ako putanja do foldera sadrži razmak, zadatak radije napravi ručno u aplikaciji *Task Scheduler*:
-*Create Basic Task* → *Weekly* → pon, uto, sri u 07:58 → *Start a program* → `pokreni.bat`.)
+(Ako „Padel obavijest” već postoji, prvo ga obriši: `schtasks /delete /tn "Padel obavijest" /f`.)
 
-`pokreni.bat` pričeka do 8:00, pročita termine za isti dan idući tjedan (ako termini kasne,
-pokušava još 5 minuta) i pošalje obavijest. Zapis svakog pokretanja je u `zapis.txt`.
+`tiho.vbs` pokreće provjeru bez crnog prozora; preglednik se otvara izvan ekrana.
+Dvije provjere se nikad ne pokreću istovremeno. Zapis svih provjera je u `zapis.txt`.
 
-- **Računalo mora biti upaljeno** u 8:00. U *Task Scheduler* → *Padel obavijest* →
-  *Properties* → *Conditions* možeš uključiti **„Wake the computer to run this task”**
-  (radi iz sleepa, ne iz ugašenog računala).
-- Ručno pokretanje: `schtasks /run /tn "Padel obavijest"`
-- Brisanje: `schtasks /delete /tn "Padel obavijest" /f`
+- **Računalo mora biti upaljeno i ti prijavljen** (zaključan ekran je u redu). U *Task Scheduler*
+  → zadatak → *Properties* → *Conditions* možeš uključiti **„Wake the computer to run this task”**.
+- Ručno pokretanje: `schtasks /run /tn "Padel provjera"`
+- Brisanje: `schtasks /delete /tn "Padel provjera" /f`
+- Da ti opet javi sve trenutne termine, obriši `stanje.json`.
 
 ## Postavke
 
@@ -84,6 +91,6 @@ Na vrhu `padel_obavijest.py`:
 | Postavka | Zadano | Značenje |
 |---|---|---|
 | `DAYS` | `{0, 1, 2}` | pon, uto, sri |
-| `EARLIEST` / `LATEST` | `19:00` / `22:00` | raspon početka termina |
+| `EARLIEST` / `LATEST` | `17:00` / `22:00` | raspon početka termina |
 | `DURATION` | `90` | trajanje u minutama |
 | `DAYS_AHEAD` | `7` | koliko dana unaprijed se termini otvaraju |
