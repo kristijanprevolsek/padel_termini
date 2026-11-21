@@ -41,8 +41,6 @@ import requests
 # --- postavke -----------------------------------------------------------------
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
 TENANT_ID = "2ea46d91-f7ed-4e4a-aa5c-392ee5995ad9"
-# link u obavijesti: otvara klub u Playtomic aplikaciji (može se promijeniti u postavke.json pod "link")
-APP_LINK = f"https://playtomic.com/tenant/{TENANT_ID}"
 # raspon početka termina po danu u tjednu (0 = pon ... 6 = ned); dan koji nije naveden se preskače
 WORKDAY = ("17:00", "21:00")
 WEEKEND = ("09:00", "12:00")
@@ -89,11 +87,9 @@ def load_config() -> dict:
 
 def notify(topic: str | None, title: str, message: str, high: bool = False,
            buttons: list[tuple[str, str]] | None = None) -> None:
-    """buttons: do 3 gumba (natpis, link) ispod obavijesti; bez njih gumb otvara klub.
+    """buttons: do 3 gumba (natpis, link) ispod obavijesti – samo za udarne termine.
     Dodir same obavijesti otvara aplikaciju ntfy (namjerno bez linka), pa termin biraš gumbom."""
-    link = load_config().get("link", APP_LINK)
-    buttons = (buttons or [])[:3] or [("Otvori Playtomic", link)]
-    actions = "; ".join(f"view, {label.replace(',', ' ')}, {url}" for label, url in buttons)
+    actions = "; ".join(f"view, {label.replace(',', ' ')}, {url}" for label, url in (buttons or [])[:3])
     print(f"\n=== {title} ===\n{message}\n")
     if not topic:
         print("(ntfy topic nije postavljen u postavke.json – obavijest nije poslana)")
@@ -105,7 +101,7 @@ def notify(topic: str | None, title: str, message: str, high: bool = False,
             "Title": title.encode("utf-8"),
             "Tags": "tennis",
             "Priority": "high" if high else "default",
-            "Actions": actions.encode("utf-8"),
+            **({"Actions": actions.encode("utf-8")} if actions else {}),
         },
         timeout=15,
     )
@@ -337,15 +333,17 @@ def fmt_day(d: date) -> str:
 MAX_NOTIFICATIONS = 5  # najviše obavijesti po provjeri (ostatak ide popisom u zadnjoj)
 
 
+def is_prime(s: Slot) -> bool:
+    """Udarni termin: pon–pet s početkom 17–21 h. Samo oni dobivaju gumb s linkom."""
+    return s.start_utc.astimezone(TZ).weekday() < 5 and WORKDAY[0] <= s.start <= WORKDAY[1]
+
+
 def notify_slots(topic: str | None, title: str, slots: list[Slot]) -> None:
-    """Termini po 3 u obavijesti (ntfy dopušta 3 gumba); svaki gumb otvara plaćanje tog terena."""
+    """Udarni termini po 3 u obavijesti (ntfy dopušta 3 gumba), svaki s gumbom za plaćanje tog
+    terena; ostali (vikend) u jednoj obavijesti samo kao popis, bez gumba."""
     slots = sorted(slots, key=lambda s: (s.start_utc, s.court))
-    chunks = [slots[i:i + 3] for i in range(0, len(slots), 3)]
-    if len(chunks) > MAX_NOTIFICATIONS:
-        rest = [s for c in chunks[MAX_NOTIFICATIONS - 1:] for s in c]
-        chunks = chunks[:MAX_NOTIFICATIONS - 1]
-    else:
-        rest = []
+    prime = [s for s in slots if is_prime(s)]
+    other = [s for s in slots if not is_prime(s)]
 
     def describe(s: Slot) -> tuple[str, str]:
         d = s.start_utc.astimezone(TZ).date()
@@ -353,19 +351,20 @@ def notify_slots(topic: str | None, title: str, slots: list[Slot]) -> None:
         short = court.replace("Court ", "C")
         return f"{fmt_day(d)} {s.start} – {court}", f"{DAY_NAMES[d.weekday()]} {s.start} {short}"
 
-    total = len(chunks) + (1 if rest else 0)
+    chunks = [prime[i:i + 3] for i in range(0, len(prime), 3)]
+    if len(chunks) > MAX_NOTIFICATIONS:  # previše – ostatak udarnih ide u popis bez gumba
+        other = [s for c in chunks[MAX_NOTIFICATIONS:] for s in c] + other
+        chunks = chunks[:MAX_NOTIFICATIONS]
     for i, chunk in enumerate(chunks, 1):
         lines, buttons = [], []
         for s in chunk:
             text, label = describe(s)
-            lines.append(f"🎾 {text}")
+            lines.append(f"🔥 {text}")
             buttons.append((label, booking_url(s)))
-        suffix = f" ({i}/{total})" if total > 1 else ""
+        suffix = f" ({i}/{len(chunks)})" if len(chunks) > 1 else ""
         notify(topic, title + suffix, "\n".join(lines), buttons=buttons)
-    if rest:
-        lines = [describe(s)[0] for s in rest]
-        notify(topic, f"{title} ({total}/{total}) – još {len(rest)}",
-               "\n".join(lines) + "\n\nOvi su bez gumba – otvori klub u aplikaciji.")
+    if other:
+        notify(topic, f"{title} – ostali", "\n".join("🎾 " + describe(s)[0] for s in other))
 
 
 # --- praćenje svakih 10 minuta -------------------------------------------------------

@@ -58,12 +58,12 @@ Usporedi ga s tablicom na stranici.
 **Ako ne radi**, u folderu `debug` su `stranica.png`, `stranica.html` i `odgovori.json`.
 Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 
-### Linkovi na termine
+### Gumbi za rezervaciju
 
-Svaki termin ima gumb koji otvara **plaćanje točno tog termina**
-za svaki teren posebno, u Playtomic aplikaciji, ili na webu ako aplikacija nije
-instalirana. Termini dolaze po tri u obavijesti, svaki sa svojim gumbom; dodir same obavijesti otvara
-aplikaciju ntfy, gdje vidiš sve termine i biraš gumb. Link traži prijavu ako nisi prijavljen.
+**Udarni termini** (pon–pet, početak 17–21 h) dolaze po tri u obavijesti, svaki sa svojim
+gumbom (npr. „pon 17:00 C1”) koji otvara **plaćanje točno tog terena i termina** u Playtomic
+aplikaciji (ili na webu, uz prijavu). Ostali termini (vikend) dolaze u jednoj obavijesti
+„– ostali”, samo kao popis, bez gumba. Dodir same obavijesti otvara aplikaciju ntfy.
 
 ## 4. Automatsko praćenje
 
