@@ -418,12 +418,24 @@ def _watch(args, topic: str | None) -> int:
     return 0
 
 
+def start_log(path: Path) -> None:
+    """Preusmjeri ispis u datoteku (pythonw.exe iz Task Schedulera nema konzolu)."""
+    if not path.is_absolute():  # Task Scheduler pokreće program iz drugog foldera
+        path = HERE / path
+    if path.exists() and path.stat().st_size > 1_000_000:  # drži zapis malim
+        tail = path.read_bytes()[-300_000:]
+        path.write_bytes(tail[tail.find(b"\n") + 1:])
+    f = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+    sys.stdout = sys.stderr = f
+    print(f"\n--- {datetime.now(TZ):%Y-%m-%d %H:%M:%S}  {' '.join(sys.argv[1:])}")
+
+
 def main() -> int:
     # Windows konzola/datoteka inače ne zna ispisati emoji i hrvatska slova
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # pythonw.exe nema konzolu (stdout je None)
             pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days-ahead", type=int, default=DAYS_AHEAD, help="za koliko dana unaprijed")
@@ -435,10 +447,13 @@ def main() -> int:
     ap.add_argument("--headless", action="store_true",
                     help="skriveni preglednik (Playtomic mu možda ne prikaže termine)")
     ap.add_argument("--debug", action="store_true", help="spremi screenshot i podatke u mapu debug")
+    ap.add_argument("--log", help="ispis dodaj u ovu datoteku (za pokretanje iz Task Schedulera)")
     ap.add_argument("--watch", action="store_true",
                     help="provjeri sve pon/uto/sri do --days-ahead i javi samo NOVE termine")
     ap.add_argument("--test-notify", action="store_true", help="pošalji probnu obavijest i izađi")
     args = ap.parse_args()
+    if args.log:
+        start_log(Path(args.log))
 
     topic = load_config().get("ntfy_topic")
     if args.test_notify:

@@ -64,23 +64,26 @@ termine**: kad se otvori novi dan ili kad netko otkaže. Svaka provjera gleda sv
 pon/uto/sri od danas do 7 dana unaprijed. Noću (23–7 h) ne provjerava, a greške javlja
 najviše jednom u 2 sata.
 
-U PowerShellu, **u folderu projekta**, napravi dva zadatka:
+U PowerShellu, **u folderu projekta**, napravi dva zadatka. Pokreću `pythonw.exe` (Python bez
+prozora), a ispis ide u `zapis.txt`:
 
 ```powershell
+$py = Join-Path (Split-Path (python -c "import sys; print(sys.executable)")) pythonw.exe
+$cmd = "$py $PWD\padel_obavijest.py --watch --log $PWD\zapis.txt"
 # svakih 10 minuta
-schtasks /create /tn "Padel provjera" /sc minute /mo 10 /tr "wscript.exe $PWD\tiho.vbs"
+schtasks /create /f /tn "Padel provjera" /sc minute /mo 10 /tr $cmd
 # pon/uto/sri u 7:58 – čeka točno 8:00, kad se otvori novi dan
-schtasks /create /tn "Padel obavijest" /sc weekly /d MON,TUE,WED /st 07:58 /tr "wscript.exe $PWD\tiho.vbs pokreni.bat"
+schtasks /create /f /tn "Padel obavijest" /sc weekly /d MON,TUE,WED /st 07:58 /tr "$cmd --start-at 08:00"
 ```
 
-(Ako „Padel obavijest” već postoji, prvo ga obriši: `schtasks /delete /tn "Padel obavijest" /f`.)
+(`/f` prepisuje istoimeni zadatak ako već postoji. Ako putanja do Pythona ili foldera sadrži
+razmak, javi – naredba tada treba navodnike.)
 
-`tiho.vbs` pokreće provjeru bez crnog prozora; preglednik se otvara izvan ekrana.
-Dvije provjere se nikad ne pokreću istovremeno. Zapis svih provjera je u `zapis.txt`.
+Preglednik se otvara izvan ekrana, a dvije provjere se nikad ne pokreću istovremeno.
 
 - **Računalo mora biti upaljeno i ti prijavljen** (zaključan ekran je u redu). U *Task Scheduler*
   → zadatak → *Properties* → *Conditions* možeš uključiti **„Wake the computer to run this task”**.
-- Ručno pokretanje: `schtasks /run /tn "Padel provjera"`
+- Ručno pokretanje: `schtasks /run /tn "Padel provjera"`, pa nakon minute `Get-Content zapis.txt -Tail 15`
 - Brisanje: `schtasks /delete /tn "Padel provjera" /f`
 - Da ti opet javi sve trenutne termine, obriši `stanje.json`.
 
