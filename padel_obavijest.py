@@ -109,20 +109,28 @@ def find_availability(obj) -> list[dict]:
     return found
 
 
+def local_start(start_date: str, start_time: str) -> datetime:
+    """Playtomic šalje vrijeme u UTC-u; pretvori u zagrebačko (zimi +1, ljeti +2)."""
+    utc = datetime.fromisoformat(f"{start_date[:10]}T{start_time[:8]}").replace(tzinfo=ZoneInfo("UTC"))
+    return utc.astimezone(TZ)
+
+
 def slots_for_day(entries: list[dict], courts: dict, day: date, any_slot: bool) -> list[Slot]:
     lo, hi = ("00:00", "23:59") if any_slot else (EARLIEST, LATEST)
     out = {}
     for e in entries:
         rid = e.get("resource_id") or e.get("resourceId")
-        if str(e.get("start_date", ""))[:10] != day.isoformat():
-            continue
         name, is_double = courts.get(rid, (rid[:8], True))
         if not is_double:
             continue
         for s in e["slots"]:
-            start = str(s.get("start_time", ""))[:5]
+            try:
+                start_dt = local_start(str(e.get("start_date", "")), str(s.get("start_time", "")))
+            except ValueError:
+                continue
+            start = start_dt.strftime("%H:%M")
             dur = int(s.get("duration", 0))
-            if dur != DURATION or not (lo <= start <= hi):
+            if start_dt.date() != day or dur != DURATION or not (lo <= start <= hi):
                 continue
             out[(name, start)] = Slot(name, start, dur, str(s.get("price", "")))
     return sorted(out.values(), key=lambda s: (s.start, s.court))
