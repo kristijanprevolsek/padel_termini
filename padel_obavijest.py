@@ -39,9 +39,10 @@ import requests
 
 # --- postavke -----------------------------------------------------------------
 CLUB_URL = "https://playtomic.com/clubs/padel-embassy"
-DAYS = {0, 1, 2}            # pon, uto, sri
-EARLIEST = "17:00"          # najraniji početak
-LATEST = "21:00"            # najkasniji početak
+# raspon početka termina po danu u tjednu (0 = pon ... 6 = ned); dan koji nije naveden se preskače
+WORKDAY = ("17:00", "21:00")
+WEEKEND = ("09:00", "12:00")
+WINDOWS = {0: WORKDAY, 1: WORKDAY, 2: WORKDAY, 3: WORKDAY, 4: WORKDAY, 5: WEEKEND, 6: WEEKEND}
 DURATION = 90               # minuta
 DAYS_AHEAD = 7              # termini se otvaraju 7 dana unaprijed
 
@@ -129,7 +130,7 @@ def local_start(start_date: str, start_time: str) -> datetime:
 
 
 def slots_for_day(entries: list[dict], courts: dict, day: date, any_slot: bool) -> list[Slot]:
-    lo, hi = ("00:00", "23:59") if any_slot else (EARLIEST, LATEST)
+    lo, hi = ("00:00", "23:59") if any_slot else WINDOWS[day.weekday()]
     out = {}
     for e in entries:
         rid = e.get("resource_id") or e.get("resourceId")
@@ -376,7 +377,7 @@ def _watch(args, topic: str | None) -> int:
     today = now.date()
     last = today + timedelta(days=args.days_ahead)
     days = [today + timedelta(days=i) for i in range(args.days_ahead + 1)]
-    days = [d for d in days if args.any or d.weekday() in DAYS]
+    days = [d for d in days if args.any or d.weekday() in WINDOWS]
     state = load_state()
 
     deadline = time.monotonic() + args.retry_minutes * 60
@@ -457,7 +458,7 @@ def main() -> int:
     ap.add_argument("--debug", action="store_true", help="spremi screenshot i podatke u mapu debug")
     ap.add_argument("--log", help="ispis dodaj u ovu datoteku (za pokretanje iz Task Schedulera)")
     ap.add_argument("--watch", action="store_true",
-                    help="provjeri sve pon/uto/sri do --days-ahead i javi samo NOVE termine")
+                    help="provjeri sve dane do --days-ahead i javi samo NOVE termine")
     ap.add_argument("--test-notify", action="store_true", help="pošalji probnu obavijest i izađi")
     args = ap.parse_args()
     if args.log:
@@ -473,8 +474,8 @@ def main() -> int:
     if args.start_at:
         wait_until(args.start_at)
     target = datetime.now(TZ).date() + timedelta(days=args.days_ahead)
-    if not args.any and target.weekday() not in DAYS:
-        print(f"{fmt_day(target)} nije pon/uto/sri – ništa za javiti.")
+    if not args.any and target.weekday() not in WINDOWS:
+        print(f"{fmt_day(target)} se ne prati – ništa za javiti.")
         return 0
 
     deadline = time.monotonic() + args.retry_minutes * 60
@@ -501,7 +502,7 @@ def main() -> int:
 
     slots = slots_for_day(entries, courts, target, args.any)
     if not slots:
-        rng = "" if args.any else f" od {EARLIEST}"
+        rng = "" if args.any else ", početak {}–{}".format(*WINDOWS[target.weekday()])
         notify(topic, "🎾 Padel – nema slobodnih termina",
                f"{fmt_day(target)}: nema slobodnog double terena ({DURATION} min{rng}).")
         return 0

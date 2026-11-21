@@ -1,11 +1,12 @@
 # padel_termini
 
-Obavijest na mobitel o slobodnim **double** terenima (90 min, početak 17–21 h) u **Padel Embassyju**
-za **ponedjeljak, utorak i srijedu**, i to u 8:00 kad se termini otvore (7 dana unaprijed).
+Obavijest na mobitel o **novim** slobodnim **double** terenima (90 min) u **Padel Embassyju**:
+radnim danom s početkom **17–21 h**, vikendom **9–12 h**, za sljedećih 7 dana. Provjera ide
+svakih 10 minuta i u 8:00, kad se otvori novi dan.
 
 Program na tvom računalu otvori javnu stranicu kluba
-(<https://playtomic.com/clubs/padel-embassy>) u pregledniku Edge, prebaci tablicu na dan
-za 7 dana, pročita slobodne termine i pošalje ti popis u aplikaciju **ntfy**. Rezerviraš sam,
+(<https://playtomic.com/clubs/padel-embassy>) u pregledniku Edge, strelicom prođe kroz
+sljedećih 7 dana, pročita slobodne termine i pošalje ti popis u aplikaciju **ntfy**. Rezerviraš sam,
 u Playtomic aplikaciji. Program ništa ne rezervira.
 
 > Playtomic blokira skripte koje izravno zovu njihov API, pa program čita samo ono što
@@ -60,31 +61,44 @@ Pošalji ih (ili ispis iz PowerShella) pa ćemo prilagoditi program.
 ## 4. Automatsko praćenje
 
 Program pamti što ti je već javio (`stanje.json`) i šalje obavijest **samo za nove slobodne
-termine**: kad se otvori novi dan ili kad netko otkaže. Svaka provjera gleda sve
-pon/uto/sri od danas do 7 dana unaprijed. Noću (23–7 h) ne provjerava, a greške javlja
-najviše jednom u 2 sata.
+termine**: kad se otvori novi dan ili kad netko otkaže. Svaka provjera gleda sve dane od danas
+do 7 dana unaprijed: **radne dane s početkom 17–21 h, vikende 9–12 h**. Noću (23–7 h) ne
+provjerava, a greške javlja najviše jednom u 2 sata.
 
-U PowerShellu, **u folderu projekta**, napravi dva zadatka. Pokreću `pythonw.exe` (Python bez
-prozora), a ispis ide u `zapis.txt`:
+U PowerShellu, **u folderu projekta**, zalijepi cijeli blok. Napravi dva zadatka koja pokreću
+`pythonw.exe` (Python bez prozora); ispis ide u `zapis.txt`:
 
 ```powershell
-$py = Join-Path (Split-Path (python -c "import sys; print(sys.executable)")) pythonw.exe
-$cmd = "$py $PWD\padel_obavijest.py --watch --log zapis.txt"
+$py  = Join-Path (Split-Path (python -c "import sys; print(sys.executable)")) pythonw.exe
+$dir = $PWD.Path
+$set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -MultipleInstances IgnoreNew
+
 # svakih 10 minuta
-schtasks /create /f /tn "Padel provjera" /sc minute /mo 10 /tr $cmd
-# pon/uto/sri u 7:58 – čeka točno 8:00, kad se otvori novi dan
-schtasks /create /f /tn "Padel obavijest" /sc weekly /d MON,TUE,WED /st 07:58 /tr "$cmd --start-at 08:00"
+$a1 = New-ScheduledTaskAction -Execute $py -Argument "padel_obavijest.py --watch --log zapis.txt" -WorkingDirectory $dir
+$t1 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 10)
+Register-ScheduledTask -TaskName "Padel provjera" -Action $a1 -Trigger $t1 -Settings $set -Force
+
+# svaki dan u 7:58 – čeka točno 8:00, kad se otvori novi dan
+$a2 = New-ScheduledTaskAction -Execute $py -Argument "padel_obavijest.py --watch --log zapis.txt --start-at 08:00" -WorkingDirectory $dir
+$t2 = New-ScheduledTaskTrigger -Daily -At 07:58
+Register-ScheduledTask -TaskName "Padel obavijest" -Action $a2 -Trigger $t2 -Settings $set -Force
 ```
 
-(`/f` prepisuje istoimeni zadatak ako već postoji. Ako putanja do Pythona ili foldera sadrži
-razmak, javi – naredba tada treba navodnike.)
+`-Force` zamjenjuje postojeće zadatke istog imena. Zadaci rade i na bateriji i bude računalo
+iz sleepa. Dvije provjere se nikad ne pokreću istovremeno, a preglednik se otvara izvan ekrana.
 
-Preglednik se otvara izvan ekrana, a dvije provjere se nikad ne pokreću istovremeno.
+Test:
+
+```powershell
+Start-ScheduledTask "Padel provjera"
+Start-Sleep 60; Get-Content zapis.txt -Tail 15 -Encoding utf8
+Get-ScheduledTaskInfo "Padel provjera" | Select LastRunTime, LastTaskResult, NextRunTime
+```
 
 - **Računalo mora biti upaljeno i ti prijavljen** (zaključan ekran je u redu). U *Task Scheduler*
   → zadatak → *Properties* → *Conditions* možeš uključiti **„Wake the computer to run this task”**.
-- Ručno pokretanje: `schtasks /run /tn "Padel provjera"`, pa nakon minute `Get-Content zapis.txt -Tail 15`
-- Brisanje: `schtasks /delete /tn "Padel provjera" /f`
+- Ručno pokretanje: `Start-ScheduledTask "Padel provjera"`
+- Brisanje: `Unregister-ScheduledTask "Padel provjera" -Confirm:$false`
 - Da ti opet javi sve trenutne termine, obriši `stanje.json`.
 
 ## Postavke
@@ -93,7 +107,8 @@ Na vrhu `padel_obavijest.py`:
 
 | Postavka | Zadano | Značenje |
 |---|---|---|
-| `DAYS` | `{0, 1, 2}` | pon, uto, sri |
-| `EARLIEST` / `LATEST` | `17:00` / `21:00` | raspon početka termina |
+| `WORKDAY` | `17:00`–`21:00` | početak termina pon–pet |
+| `WEEKEND` | `09:00`–`12:00` | početak termina sub–ned |
+| `WINDOWS` | svi dani | koji dan koristi koji raspon (dan koji nije naveden se preskače) |
 | `DURATION` | `90` | trajanje u minutama |
 | `DAYS_AHEAD` | `7` | koliko dana unaprijed se termini otvaraju |
