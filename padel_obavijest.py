@@ -144,26 +144,48 @@ def launch(p, show: bool):
     raise SystemExit(f"Ne mogu pokrenuti preglednik: {last}")
 
 
+DATE_RE_JS = r"/[^\s,\d]{2,12},\s*\d{1,2}\.?\s*[^\s\d]{2,12}/"
+
 DATE_LABEL_JS = r"""() => {
-  // natpis s datumom iznad tablice, npr. "sub, 21. stu" ili "Sat, 21 Nov"
-  const re = /^[^\s,]{2,12},\s*\d{1,2}\.?\s*[^\s]{2,12}\.?$/;
-  const els = [...document.querySelectorAll('body *')].filter(el =>
-    el.offsetWidth > 0 && ![...el.children].some(c => c.tagName !== 'svg' && c.tagName !== 'BR') &&
-    re.test((el.innerText || '').trim()));
-  for (const el of els) {
-    // strelica za sljedeći dan = prvi vidljivi gumb iza natpisa u istom bloku
-    let box = el.parentElement;
-    for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
-      const next = [...box.querySelectorAll('button')].find(b => b.offsetWidth > 0 &&
-        (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) && !b.contains(el));
-      if (next) {
-        document.querySelectorAll('[data-padel-next]').forEach(b => b.removeAttribute('data-padel-next'));
-        next.setAttribute('data-padel-next', '1');
-        return el.innerText.trim();
-      }
+  // najmanji element čiji tekst sadrži datum iznad tablice, npr. "sub, 21. stu" ili "Sat, 21 Nov"
+  const re = """ + DATE_RE_JS + r""";
+  let best = null;
+  for (const el of document.querySelectorAll('body *')) {
+    if (!el.offsetWidth) continue;
+    const t = (el.innerText || '').trim();
+    if (t.length > 40 || !re.test(t)) continue;
+    if (!best || best.contains(el)) best = el;
+  }
+  if (!best) return null;
+  // strelica za sljedeći dan = prvi gumb samo s ikonom (bez teksta) iza natpisa
+  // referentna točka je sam tekst s brojem dana (ne cijeli blok, koji može sadržavati i strelice)
+  const walker = document.createTreeWalker(best, NodeFilter.SHOW_TEXT);
+  let ref = best;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (/\d/.test(n.textContent)) { ref = n; break; }
+  const iconOnly = b => b.offsetWidth > 0 && !/[\p{L}\d]/u.test(b.innerText || '') && !b.contains(ref);
+  document.querySelectorAll('[data-padel-next]').forEach(b => b.removeAttribute('data-padel-next'));
+  let box = best.parentElement;
+  for (let i = 0; i < 5 && box; i++, box = box.parentElement) {
+    const after = [...box.querySelectorAll('button,[role=button],a')].filter(iconOnly)
+      .filter(b => ref.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    if (after.length) {
+      after[0].setAttribute('data-padel-next', '1');
+      break;
     }
   }
-  return null;
+  return best.innerText.trim().match(re)[0];
+}"""
+
+DATE_AREA_JS = r"""() => {
+  const re = """ + DATE_RE_JS + r""";
+  let best = null;
+  for (const el of document.querySelectorAll('body *')) {
+    const t = (el.innerText || '').trim();
+    if (t.length <= 40 && re.test(t) && (!best || best.contains(el))) best = el;
+  }
+  let box = best;
+  for (let i = 0; i < 3 && box && box.parentElement; i++) box = box.parentElement;
+  return box ? box.outerHTML.slice(0, 3000) : 'datum nije pronađen';
 }"""
 
 
@@ -181,7 +203,7 @@ def accept_cookies(page) -> None:
 
 def click_next_day(page) -> str | None:
     """Klikni strelicu za sljedeći dan; vrati natpis datuma nakon klika."""
-    if page.evaluate(DATE_LABEL_JS) is None:
+    if page.evaluate(DATE_LABEL_JS) is None or not page.locator("[data-padel-next='1']").count():
         return None
     page.locator("[data-padel-next='1']").first.click()
     try:
@@ -225,6 +247,8 @@ def read_page(target: date, show: bool, debug: bool) -> tuple[list[dict], dict, 
             label = click_next_day(page)
             if label is None:
                 print("Ne mogu pronaći strelicu za sljedeći dan.")
+                if debug:
+                    print("--- HTML oko datuma ---\n" + page.evaluate(DATE_AREA_JS) + "\n---")
                 break
         print(f"Nakon pomicanja ({clicks}x): {label}")
 
